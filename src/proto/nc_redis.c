@@ -199,6 +199,9 @@ redis_argn(struct msg *r)
     case MSG_REQ_REDIS_ZREVRANGE:
     case MSG_REQ_REDIS_ZREVRANGEBYSCORE:
     case MSG_REQ_REDIS_ZUNIONSTORE:
+
+    case MSG_REQ_REDIS_EVAL:
+    case MSG_REQ_REDIS_EVALSHA:
         return true;
 
     default:
@@ -285,6 +288,14 @@ redis_parse_req(struct msg *r)
         SW_ARGN_LEN_LF,
         SW_ARGN,
         SW_ARGN_LF,
+        SW_SCRIPT_LEN,
+        SW_SCRIPT_LEN_LF,
+        SW_SCRIPT,
+        SW_SCRIPT_LF,
+        SW_NUM_KEYS_LEN,
+        SW_NUM_KEYS_LEN_LF,
+        SW_NUM_KEYS,
+        SW_NUM_KEYS_LF,
         SW_FRAGMENT,
         SW_SENTINEL
     } state;
@@ -427,6 +438,10 @@ redis_parse_req(struct msg *r)
                 break;
 
             case 4:
+                if (str4icmp(m, 'e', 'v', 'a', 'l')) {
+                    r->type = MSG_REQ_REDIS_EVAL;
+                    break;
+                }
                 if (str4icmp(m, 'p', 't', 't', 'l')) {
                     r->type = MSG_REQ_REDIS_PTTL;
                     break;
@@ -701,6 +716,10 @@ redis_parse_req(struct msg *r)
                 break;
 
             case 7:
+                if (str7icmp(m, 'e', 'v', 'a', 'l', 's', 'h', 'a')) {
+                    r->type = MSG_REQ_REDIS_EVALSHA;
+                    break;
+                }
                 if (str7icmp(m, 'p', 'e', 'r', 's', 'i', 's', 't')) {
                     r->type = MSG_REQ_REDIS_PERSIST;
                     break;
@@ -888,7 +907,13 @@ redis_parse_req(struct msg *r)
         case SW_REQ_TYPE_LF:
             switch (ch) {
             case LF:
-                state = SW_KEY_LEN;
+                if(r->type == MSG_REQ_REDIS_EVAL || 
+                        r->type == MSG_REQ_REDIS_EVALSHA) {
+                    state = SW_SCRIPT_LEN;
+                }
+                else {
+                    state = SW_KEY_LEN;
+                }
                 break;
 
             default:
@@ -1019,6 +1044,137 @@ redis_parse_req(struct msg *r)
         case SW_FRAGMENT:
             r->token = p;
             goto fragment;
+
+        case SW_SCRIPT_LEN:
+            if (r->token == NULL) {
+                if (ch != '$') {
+                    goto error;
+                }
+                r->rlen = 0;
+                r->token = p;
+            } else if (isdigit(ch)) {
+                r->rlen = r->rlen * 10 + (uint32_t)(ch - '0');
+            } else if (ch == CR) {
+                if ((p - r->token) <= 1 || r->rnarg == 0) {
+                    goto error;
+                }
+                r->rnarg--;
+                r->token = NULL;
+                state = SW_SCRIPT_LEN_LF;
+            } else {
+                goto error;
+            }
+
+            break;
+
+        case SW_SCRIPT_LEN_LF:
+            switch (ch) {
+            case LF:
+                state = SW_SCRIPT;
+                break;
+
+            default:
+                goto error;
+            }
+
+            break;
+
+        case SW_SCRIPT:
+            log_debug(LOG_VERB, "script");
+            m = p + r->rlen;
+            if (m >= b->last) {
+                r->rlen -= (uint32_t)(b->last - p);
+                m = b->last - 1;
+                p = m;
+                break;
+            }
+
+            if (*m != CR) {
+                goto error;
+            }
+
+            p = m; /* move forward by rlen bytes */
+            r->rlen = 0;
+
+            state = SW_SCRIPT_LF;
+            break;
+
+        case SW_SCRIPT_LF:
+            switch (ch) {
+            case LF:
+                state = SW_NUM_KEYS_LEN;
+                break;
+
+            default:
+                goto error;
+            }
+
+            break;
+
+        case SW_NUM_KEYS_LEN:
+            if (r->token == NULL) {
+                if (ch != '$') {
+                    goto error;
+                }
+                r->rlen = 0;
+                r->token = p;
+            } else if (isdigit(ch)) {
+                r->rlen = r->rlen * 10 + (uint32_t)(ch - '0');
+            } else if (ch == CR) {
+                if ((p - r->token) <= 1 || r->rnarg == 0) {
+                    goto error;
+                }
+                r->rnarg--;
+                r->token = NULL;
+                state = SW_NUM_KEYS_LEN_LF;
+            } else {
+                goto error;
+            }
+
+            break;
+
+        case SW_NUM_KEYS_LEN_LF:
+            switch (ch) {
+            case LF:
+                state = SW_NUM_KEYS;
+                break;
+
+            default:
+                goto error;
+            }
+
+            break;
+
+        case SW_NUM_KEYS:
+            m = p + r->rlen;
+            if (m >= b->last) {
+                r->rlen -= (uint32_t)(b->last - p);
+                m = b->last - 1;
+                p = m;
+                break;
+            }
+
+            if (*m != CR) {
+                goto error;
+            }
+
+            p = m; /* move forward by rlen bytes */
+            r->rlen = 0;
+
+            state = SW_NUM_KEYS_LF;
+            break;
+
+        case SW_NUM_KEYS_LF: 
+            switch (ch) {
+            case LF:
+                state = SW_KEY_LEN;
+                break;
+
+            default:
+                goto error;
+            }
+
+            break;
 
         case SW_ARG1_LEN:
             if (r->token == NULL) {

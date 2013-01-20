@@ -551,3 +551,9 @@ printf '*8\r\n$4\r\nzadd\r\n$6\r\n{zfoo}\r\n$3\r\n100\r\n$3\r\nbar\r\n$3\r\n101\
 printf '*6\r\n$4\r\nzadd\r\n$7\r\n{zfoo}2\r\n$3\r\n100\r\n$3\r\nbar\r\n$3\r\n101\r\n$3\r\nbat\r\n' | socat ${debug} ${timeout} - TCP:localhost:${port},shut-close
 printf '*5\r\n$11\r\nzunionstore\r\n$7\r\n{zfoo}3\r\n$1\r\n2\r\n$6\r\n{zfoo}\r\n$7\r\n{zfoo}2\r\n' | socat ${debug} ${timeout} - TCP:localhost:${port},shut-close
 printf '*5\r\n$6\r\nzrange\r\n$7\r\n{zfoo}3\r\n$1\r\n0\r\n$1\r\n3\r\n$10\r\nWITHSCORES\r\n' | socat ${debug} ${timeout} - TCP:localhost:${port},shut-close
+
+# scripting
+
+printf '\neval\n'
+printf '*3\r\n$3\r\nset\r\n$6\r\n{foo}1\r\n$3\r\noof\r\n' | socat ${debug} ${timeout} - TCP:localhost:${port},shut-close
+printf '*4\r\n$4\r\neval\r\n$33\r\nreturn redis.call("get", KEYS[1])\r\n$1\r\n1\r\n$6\r\n{foo}1\r\n' | socat ${debug} ${timeout} - TCP:localhost:${port},shut-close
